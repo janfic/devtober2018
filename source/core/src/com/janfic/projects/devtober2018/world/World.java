@@ -14,10 +14,12 @@ public class World {
     private Random rand;
     private TileData[][] data;
     private int size;
+    private double evaporation;
 
-    public World(int w, int mh, int seed, WorldType type) {
+    public World(int w, int mh, int seed, WorldType type, double evaporation) {
         rand = (seed == 0) ? new Random() : new Random(seed);
         size = w;
+        this.evaporation = evaporation;
 
         data = new TileData[w][w];
         if (null != type) {
@@ -25,18 +27,56 @@ public class World {
                 case FLAT:
                     for (int x = 0; x < w; x++) {
                         for (int y = 0; y < w; y++) {
-                            data[y][x] = new TileData(x, y, mh, 0);
+                            data[y][x] = new TileData(x, y, mh, 0, 0);
                         }
                     }
                     break;
                 case RANDOM:
                     for (int x = 0; x < w; x++) {
                         for (int y = 0; y < w; y++) {
-                            data[y][x] = new TileData(x, y, rand.nextInt(mh) + 1, 0);;
+                            data[y][x] = new TileData(x, y, rand.nextInt(mh) + 1, 0, 0);;
                         }
                     }
                     break;
                 case PERLIN:
+                    break;
+                case STEPS:
+                    for (int x = 0; x < w; x++) {
+                        for (int y = 0; y < w; y++) {
+                            data[y][x] = new TileData(x, y, (w - y) + (w - x), 0, 0);
+                        }
+                    }
+                    break;
+                case ROWS:
+                    for (int x = 0; x < w; x++) {
+                        for (int y = 0; y < w; y++) {
+                            data[y][x] = new TileData(x, y, 1 + x % 2, 0, 0);
+                        }
+                    }
+                    break;
+                case RIVER:
+                    for (int x = 0; x < w; x++) {
+                        for (int y = 0; y < w; y++) {
+                            int center = (int) (w / 2 + mh / 2 * Math.cos((float) x / (float) (w - 1) * 2 * Math.PI));
+                            System.out.println(center);
+                            data[y][x] = new TileData(x, y, y == center ? 1 : 2, 0, 0);
+                        }
+                    }
+                    break;
+                case HILL:
+                    for (int x = 0; x < w; x++) {
+                        for (int y = 0; y < w; y++) {
+
+                            data[y][x] = new TileData(x, y, (int) (mh * (Math.sin(((float) x / (float) (w - 1)) * Math.PI) + Math.sin(((float) y / (float) (w - 1)) * Math.PI))) - mh, 0, 0);
+                            if (data[y][x].height < 1 ) {
+                                data[y][x].height = 1;
+                            }
+                        }
+                    }
+                    //data[0][0].fountainStrength = PARTS_PER_UNIT;
+                    //data[w - 1][w - 1].fountainStrength = PARTS_PER_UNIT;
+                    //data[0][w - 1].fountainStrength = PARTS_PER_UNIT;
+                    //data[w - 1][0].fountainStrength = PARTS_PER_UNIT;
                     break;
                 default:
                     break;
@@ -62,7 +102,7 @@ public class World {
     }
 
     public enum WorldType {
-        FLAT, RANDOM, PERLIN
+        FLAT, RANDOM, PERLIN, STEPS, RIVER, ROWS, HILL
     }
 
     public int getSize() {
@@ -95,37 +135,18 @@ public class World {
                         pool.add(data[y - 1][x]);
                     }
 
-                    boolean doRandom = false;
-                    float maxHeight = 0;
-                    if (data[y][x].water > (float) (pool.size() * PARTS_PER_UNIT)) {
-
-                        for (TileData tile : pool) {
-                            if (tile.getTotalHeight() + 1 > data[y][x].getTotalHeight() - pool.size() * PARTS_PER_UNIT) {
-                                doRandom = true;
-                            }
-                            maxHeight = tile.getTotalHeight();
-                        }
-                    } else {
-                        doRandom = true;
-                    }
                     if (data[y][x].water > PARTS_PER_UNIT) {
-                        if (doRandom) {
-                            Random rand = new Random();
+                        Random rand = new Random();
+                        do {
                             int index = rand.nextInt(pool.size());
                             change[y][x] -= PARTS_PER_UNIT;
                             change[pool.get(index).y][pool.get(index).x] += PARTS_PER_UNIT;
                             pool.remove(index);
-                        } else {
-                            change[y][x] -= pool.size() * PARTS_PER_UNIT;
-                            for (TileData tileData : pool) {
-                                change[tileData.y][tileData.x] += PARTS_PER_UNIT;
-                            }
-                        }
-                    }
-                    if (data[y][x].water <= PARTS_PER_UNIT) {
+                        } while (getMaxHeightInPool(pool) < data[y][x].getTotalHeight() + change[y][x] && !pool.isEmpty() && data[y][x].water + change[y][x] > PARTS_PER_UNIT);
+                    } else {
                         ArrayList<TileData> eligable = new ArrayList<TileData>(pool);
                         for (TileData tileData : pool) {
-                            if (!(tileData.getTotalHeight() < data[y][x].height)) {
+                            if (tileData.getTotalHeight() >= data[y][x].height) {
                                 eligable.remove(tileData);
                             }
                         }
@@ -136,8 +157,14 @@ public class World {
                             change[eligable.get(index).y][eligable.get(index).x] += PARTS_PER_UNIT;
                             pool.remove(index);
                         }
+                        if (Math.random() < evaporation && data[y][x].water == PARTS_PER_UNIT) {
+                            change[y][x] -= PARTS_PER_UNIT;
+                        }
+
                     }
+
                 }
+                change[y][x] += data[y][x].fountainStrength;
             }
         }
         for (int x = 0; x < size; x++) {
@@ -154,5 +181,15 @@ public class World {
 
     public void addWater(int x, int y, float amount) {
         data[y][x].water += amount;
+    }
+
+    public float getMaxHeightInPool(ArrayList<TileData> pool) {
+        float max = 0;
+        for (TileData tileData : pool) {
+            if (max < tileData.getTotalHeight()) {
+                max = tileData.getTotalHeight();
+            }
+        }
+        return max;
     }
 }
